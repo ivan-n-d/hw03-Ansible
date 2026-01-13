@@ -8,7 +8,7 @@
 - **web**: vm1
 
 ## Использование
-```bash
+bash
 # Проверка соединения
 ansible all -i inventory.ini -m ping
 
