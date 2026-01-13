@@ -1,0 +1,149 @@
+---
+- name: Установка Docker на машины группы app
+  hosts: app
+  become: yes
+  vars:
+    docker_version: "20.10"
+    
+  tasks:
+    - name: Обновление apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+    
+    - name: Обновление yum cache
+      yum:
+        update_cache: yes
+      when: ansible_os_family == "RedHat"
+    
+    - name: Установка зависимостей для Docker
+      package:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - gnupg
+          - lsb-release
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    - name: Добавление Docker GPG ключа
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    - name: Добавление Docker репозитория
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    - name: Установка Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+      when: ansible_os_family == "Debian"
+    
+    - name: Установка yum-utils (CentOS)
+      yum:
+        name: yum-utils
+        state: present
+      when: ansible_os_family == "RedHat"
+    
+    - name: Добавление Docker репозитория (CentOS)
+      command: yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      when: ansible_os_family == "RedHat"
+    
+    - name: Установка Docker (CentOS)
+      yum:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+      when: ansible_os_family == "RedHat"
+    
+    - name: Запуск и включение Docker службы
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: Добавление пользователя ansible-user в группу docker
+      user:
+        name: ansible-user
+        groups: docker
+        append: yes
+
+- name: Установка PostgreSQL на машины группы database
+  hosts: database
+  become: yes
+  vars:
+    postgresql_version: "{{ postgresql_version | default('14') }}"
+    postgresql_data_dir: "{{ postgresql_data_dir | default('/var/lib/postgresql/14/main') }}"
+    
+  tasks:
+    - name: Обновление apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Установка PostgreSQL
+      apt:
+        name: "postgresql-{{ postgresql_version }}"
+        state: present
+    
+    - name: Проверка существования data директории
+      stat:
+        path: "{{ postgresql_data_dir }}"
+      register: pg_data_dir
+    
+    - name: Создание data директории если не существует
+      file:
+        path: "{{ postgresql_data_dir }}"
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: '0700'
+      when: not pg_data_dir.stat.exists
+    
+    - name: Остановка PostgreSQL службы
+      systemd:
+        name: postgresql
+        state: stopped
+    
+    - name: Настройка data директории в конфигурации
+      lineinfile:
+        path: /etc/postgresql/{{ postgresql_version }}/main/postgresql.conf
+        regexp: '^data_directory\s*='
+        line: "data_directory = '{{ postgresql_data_dir }}'"
+        backup: yes
+    
+    - name: Инициализация базы данных если директория пуста
+      command: |
+        sudo -u postgres /usr/lib/postgresql/{{ postgresql_version }}/bin/initdb \
+        -D {{ postgresql_data_dir }} \
+        --locale=en_US.UTF-8 \
+        --encoding=UTF8
+      args:
+        creates: "{{ postgresql_data_dir }}/PG_VERSION"
+    
+    - name: Запуск и включение PostgreSQL службы
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+    
+    - name: Проверка статуса PostgreSQL
+      command: pg_isready
+      register: pg_status
+      changed_when: false
+      failed_when: pg_status.rc != 0

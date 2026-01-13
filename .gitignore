@@ -1,0 +1,7 @@
+*.retry
+.vagrant/
+*.log
+__pycache__/
+*.swp
+*.backup
+EOF
